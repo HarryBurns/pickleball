@@ -255,3 +255,6 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
 .hbar-fill { position: absolute; left: 4px; top: 50%; transform: translateY(-50%); height: 18px; background: var(--accent-soft); border-radius: 0 4px 4px 0; max-width: calc(100% - 8px); }
 .hbar-val { position: relative; padding-left: 8px; font-weight: 500; }
 @media (max-width: 420px) { .hide-xs { display: none; } }
+.dur-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: -2px 0 12px; }
+.chip.toggle.small { font-size: .85rem; padding: 4px 10px; }
+.chip.on-static { background: var(--accent-soft); border-color: var(--accent); }

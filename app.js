@@ -342,8 +342,10 @@ function editGame(id, presetDate) {
   const existing = id ? store.state.games[id] : null;
   const g = existing
     ? { ...existing, players: { ...(existing.players || {}) } }
-    : { date: presetDate || todayIso(), time: lastField("time"), duration: lastField("duration") || 2, place: lastField("place"), cost: "", payerId: "", players: {}, note: "" };
+    : { date: presetDate || todayIso(), time: lastField("time"), duration: 1, place: lastField("place"), cost: "", payerId: "", players: {}, note: "" };
   const selected = new Set(gamePlayerIds(g));
+  if (!(Number(g.duration) > 0)) g.duration = 1;
+  g.end = endTime(g.time, g.duration);
 
   const draw = () => {
     // активные игроки + архивные, которые уже участвуют в этой игре
@@ -359,13 +361,16 @@ function editGame(id, presetDate) {
     return `
       <form class="sheet" id="game-form" novalidate>
         <h2>${existing ? "Изменить игру" : "Новая игра"}</h2>
+        <label>Дата<input type="date" name="date" value="${esc(g.date)}" required></label>
         <div class="grid2">
-          <label>Дата<input type="date" name="date" value="${esc(g.date)}" required></label>
-          <label><span>Время <span class="muted">(необяз.)</span></span><input type="time" name="time" value="${esc(g.time || "")}"></label>
+          <label>Начало<input type="time" name="time" value="${esc(g.time || "")}"></label>
+          <label>Конец<input type="time" name="end" value="${esc(g.end || "")}"></label>
         </div>
-        <label>Длительность, часов
-          <input type="number" name="duration" inputmode="decimal" min="0" step="0.5" value="${esc(g.duration ?? "")}" placeholder="2">
-        </label>
+        <div class="dur-row">
+          <span class="muted small">Длительность:</span>
+          ${[1, 1.5, 2].map((h) => `<button type="button" class="chip toggle small ${Number(g.duration) === h ? "on" : ""}" data-dur="${h}">${hoursFmt(h)}</button>`).join("")}
+          ${[1, 1.5, 2].includes(Number(g.duration)) ? "" : `<span class="chip on-static">${hoursFmt(Number(g.duration))}</span>`}
+        </div>
         <label>Стоимость брони корта (${esc(currency() || "сумма")})
           <input type="number" name="cost" inputmode="decimal" min="0" step="0.01" value="${esc(g.cost)}" placeholder="0" required>
         </label>
@@ -404,7 +409,7 @@ function editGame(id, presetDate) {
     const fd = new FormData(form);
     g.date = fd.get("date");
     g.time = fd.get("time");
-    g.duration = fd.get("duration");
+    g.end = fd.get("end");
     g.cost = fd.get("cost");
     g.payerId = fd.get("payerId");
     g.place = fd.get("place");
@@ -415,11 +420,34 @@ function editGame(id, presetDate) {
     const form = $("#game-form", m);
     const redraw = () => {
       readForm(form);
+      g.end = g.time ? endTime(g.time, g.duration) : g.end;
       const scroll = form.scrollTop;
       m.innerHTML = draw();
       mount(m);
       $("#game-form", m).scrollTop = scroll;
     };
+    const minutes = (t) => { const [h, mm] = t.split(":").map(Number); return h * 60 + mm; };
+    form.addEventListener("change", (e) => {
+      if (e.target.name === "time") {
+        // сдвигаем конец, сохраняя длительность
+        readForm(form);
+        if (g.time) { g.end = endTime(g.time, g.duration); redraw(); }
+      } else if (e.target.name === "end") {
+        readForm(form);
+        if (g.time && g.end) {
+          let d = minutes(g.end) - minutes(g.time);
+          if (d <= 0) d += 24 * 60;
+          g.duration = Math.round((d / 60) * 100) / 100;
+          redraw();
+        }
+      }
+    });
+    $$("[data-dur]", m).forEach((b) => b.onclick = () => {
+      readForm(form);
+      g.duration = Number(b.dataset.dur);
+      g.end = endTime(g.time, g.duration);
+      redraw();
+    });
     form.addEventListener("input", (e) => {
       if (e.target.name === "cost") {
         readForm(form);
