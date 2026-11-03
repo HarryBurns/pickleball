@@ -29,23 +29,31 @@ function isoDate(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
 // Все «сегодня/сейчас» считаем по времени Нячанга, независимо от часового пояса телефона.
 const TZ = "Asia/Ho_Chi_Minh";
 const tzFmt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
-function nowParts() {
-  const o = Object.fromEntries(tzFmt.formatToParts(new Date()).map((x) => [x.type, x.value]));
-  return { date: `${o.year}-${o.month}-${o.day}`, time: `${o.hour}:${o.minute}` };
+let nowCache = null;
+// «Сейчас» в Нячанге как "YYYY-MM-DD HH:MM" (кэш на секунду — функция зовётся на каждую игру)
+function nowKey() {
+  const t = Date.now();
+  if (!nowCache || t - nowCache.t > 1000) {
+    const o = Object.fromEntries(tzFmt.formatToParts(new Date(t)).map((x) => [x.type, x.value]));
+    nowCache = { t, key: `${o.year}-${o.month}-${o.day} ${o.hour}:${o.minute}` };
+  }
+  return nowCache.key;
 }
-function todayIso() { return nowParts().date; }
-// Игра прошла, когда закончилась. Если время не указано — после окончания дня.
-function gameEndKey(g) {
-  if (!g.time) return `${g.date} 24:00`;
-  const dur = Number(g.duration) || 1;
-  const [h, m] = g.time.split(":").map(Number);
-  const end = h * 60 + m + Math.round(dur * 60);
-  if (end >= 24 * 60) return `${g.date} 24:00`;
-  return `${g.date} ${pad(Math.floor(end / 60))}:${pad(end % 60)}`;
+function todayIso() { return nowKey().slice(0, 10); }
+const toMinutes = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+const fromMinutes = (t) => `${pad(Math.floor(t / 60) % 24)}:${pad(t % 60)}`;
+function endTime(time, duration) {
+  if (!time || !duration) return "";
+  return fromMinutes(toMinutes(time) + Math.round(duration * 60));
 }
+// Игра прошла, когда закончилась (по времени Нячанга). Без времени — после окончания дня.
 function isPast(g) {
-  const n = nowParts();
-  return gameEndKey(g) <= `${n.date} ${n.time}`;
+  let end = "24:00";
+  if (g.time) {
+    const t = toMinutes(g.time) + Math.round((g.duration || 1) * 60);
+    if (t < 24 * 60) end = fromMinutes(t);
+  }
+  return `${g.date} ${end}` <= nowKey();
 }
 function parseIso(s) { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); }
 
@@ -60,15 +68,15 @@ function fmtDate(s, withYear) {
   return `${WEEKDAYS[d.getDay()]}, ${d.getDate()} ${MONTHS_GEN[d.getMonth()]}${y}`;
 }
 
-function currency() { return (store.state.settings && store.state.settings.currency) ?? "₽"; }
+function currency() { return (store.data.settings && store.data.settings.currency) ?? "₽"; }
 const numFmt = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2, minimumFractionDigits: 0 });
 function money(cents) {
   const c = currency();
   return `${numFmt.format(fromCents(cents))}${c ? " " + esc(c) : ""}`;
 }
 
-function players() { return store.state.players || {}; }
-function wallets() { return store.state.wallets || {}; }
+function players() { return store.data.players || {}; }
+function wallets() { return store.data.wallets || {}; }
 function playerName(id) { const p = players()[id]; return p ? p.name : "(удалён)"; }
 function walletMembers(wid) {
   return sortedPlayers((p) => p.walletId === wid);
@@ -89,13 +97,8 @@ function keyRep(key) {
   const m = walletMembers(key.slice(2));
   return (m.find((p) => !p.archived) || m[0] || {}).id;
 }
-function hoursFmt(h) { return `${numFmt.format(Math.round(h * 10) / 10)} ч`; }
-function endTime(time, duration) {
-  if (!time || !duration) return "";
-  const [h, m] = time.split(":").map(Number);
-  const t = h * 60 + m + Math.round(duration * 60);
-  return `${pad(Math.floor(t / 60) % 24)}:${pad(t % 60)}`;
-}
+const num1 = (x) => numFmt.format(Math.round(x * 10) / 10);
+function hoursFmt(h) { return `${num1(h)} ч`; }
 function sortedPlayers(filter = () => true) {
   return Object.entries(players())
     .map(([id, p]) => ({ id, ...p }))
@@ -103,7 +106,7 @@ function sortedPlayers(filter = () => true) {
     .sort((a, b) => a.name.localeCompare(b.name, "ru"));
 }
 function gamesList() {
-  return Object.entries(store.state.games || {})
+  return Object.entries(store.data.games || {})
     .map(([id, g]) => ({ id, ...g }))
     .sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.time || "").localeCompare(a.time || ""));
 }
@@ -207,8 +210,9 @@ function renderSync() {
   const banner = $("#banner");
   if (store.mode === "local") {
     banner.innerHTML = `<div class="banner warn">Общая база не подключена — данные видны только на этом устройстве. <a href="#" data-goto="settings">Подключить</a></div>`;
-  } else if (store.status === "offline" && store.lastError) {
-    banner.innerHTML = `<div class="banner err">${esc(store.lastError)}. Изменения сохранятся и отправятся позже.</div>`;
+  } else if (store.lastError && store.status !== "connecting") {
+    const later = store.status === "offline" ? " Изменения сохранятся и отправятся позже." : "";
+    banner.innerHTML = `<div class="banner err">${esc(store.lastError)}.${later}</div>`;
   } else banner.innerHTML = "";
 }
 $("#sync").addEventListener("click", () => { if (store.mode === "remote") store.reconnect(); else setTab("settings"); });
@@ -231,8 +235,10 @@ function render() {
   $$(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === ui.tab));
   renderSync();
   const view = $("#view");
-  if (store.mode === "remote" && !store.loaded && !Object.keys(store.state.players).length) {
-    view.innerHTML = `<div class="empty">Загрузка данных…</div>`;
+  if (store.mode === "remote" && !store.loaded && !Object.keys(store.data.players).length) {
+    view.innerHTML = `<div class="empty">${store.status === "offline"
+      ? "Нет связи с базой. Данные появятся, как только появится интернет."
+      : "Загрузка данных…"}</div>`;
     return;
   }
   const views = { games: renderGames, debts: renderDebts, players: renderPlayers, stats: renderStats, settings: renderSettings };
@@ -297,7 +303,7 @@ function gameCard(g) {
       <div class="game-head">
         <div>
           <div class="game-date">${esc(fmtDate(g.date))}${g.time ? ` · ${esc(g.time)}${g.duration ? `–${endTime(g.time, g.duration)}` : ""}` : ""}</div>
-          ${g.duration ? `<div class="muted small">⏱ ${hoursFmt(Number(g.duration))}</div>` : ""}
+          ${g.duration ? `<div class="muted small">⏱ ${hoursFmt(g.duration)}</div>` : ""}
           ${g.place ? `<div class="muted small">📍 ${esc(g.place)}</div>` : ""}
         </div>
         <div class="game-cost">
@@ -309,8 +315,8 @@ function gameCard(g) {
       <div class="chips">${chips || `<span class="muted small">Игроки не выбраны</span>`}</div>
       ${g.note ? `<div class="note">${esc(g.note)}</div>` : ""}
       <div class="row end actions">
-        <button type="button" class="btn ghost small" data-edit-game="${g.id}">Изменить</button>
-        <button type="button" class="btn ghost small danger-text" data-del-game="${g.id}">Удалить</button>
+        <button type="button" class="btn ghost small" data-edit-game="${esc(g.id)}">Изменить</button>
+        <button type="button" class="btn ghost small danger-text" data-del-game="${esc(g.id)}">Удалить</button>
       </div>
     </article>`;
 }
@@ -352,7 +358,7 @@ function renderGames(view) {
   });
   $$("[data-edit-game]", view).forEach((b) => b.onclick = () => editGame(b.dataset.editGame));
   $$("[data-del-game]", view).forEach((b) => b.onclick = async () => {
-    const g = store.state.games[b.dataset.delGame];
+    const g = store.data.games[b.dataset.delGame];
     if (!g) return;
     const ok = await doubleConfirm("Удалить игру?", `${esc(fmtDate(g.date, true))}, ${money(toCents(g.cost))}, платил ${esc(playerName(g.payerId))}.`);
     if (ok) { store.write(`games/${b.dataset.delGame}`, null); toast("Игра удалена"); }
@@ -360,24 +366,27 @@ function renderGames(view) {
 }
 
 function editGame(id, presetDate) {
-  const existing = id ? store.state.games[id] : null;
+  const existing = id ? store.data.games[id] : null;
   const g = existing
     ? { ...existing, players: { ...(existing.players || {}) } }
     : { date: presetDate || todayIso(), time: lastField("time"), duration: 1, place: lastField("place"), cost: "", payerId: "", players: {}, note: "" };
   const selected = new Set(gamePlayerIds(g));
   if (!(Number(g.duration) > 0)) g.duration = 1;
+  const shareHint = () => {
+    const total = toCents(g.cost), n = selected.size;
+    return n && total ? `С каждого: ${money(Math.ceil(total / n))}` : "";
+  };
   g.end = endTime(g.time, g.duration);
 
   const draw = () => {
     // активные игроки + архивные, которые уже участвуют в этой игре
     const pool = sortedPlayers((p) => !p.archived || selected.has(p.id) || p.id === g.payerId);
     const payerOpts = pool
-      .map((p) => `<option value="${p.id}" ${p.id === g.payerId ? "selected" : ""}>${esc(p.name)}${p.archived ? " (архив)" : ""}</option>`)
+      .map((p) => `<option value="${esc(p.id)}" ${p.id === g.payerId ? "selected" : ""}>${esc(p.name)}${p.archived ? " (архив)" : ""}</option>`)
       .join("");
     const chips = pool
-      .map((p) => `<button type="button" class="chip toggle ${selected.has(p.id) ? "on" : ""}" data-toggle="${p.id}" aria-pressed="${selected.has(p.id)}">${esc(p.name)}</button>`)
+      .map((p) => `<button type="button" class="chip toggle ${selected.has(p.id) ? "on" : ""}" data-toggle="${esc(p.id)}" aria-pressed="${selected.has(p.id)}">${esc(p.name)}</button>`)
       .join("");
-    const total = toCents(g.cost);
     const n = selected.size;
     return `
       <form class="sheet" id="game-form" novalidate>
@@ -403,7 +412,7 @@ function editGame(id, presetDate) {
         </label>
         <div class="field">
           <div class="label-row">
-            <span>Кто играет <b id="count">${n}</b></span>
+            <span>Кто играет <b>${n}</b></span>
             <span>
               <button type="button" class="link" id="sel-all">все</button> ·
               <button type="button" class="link" id="sel-none">никто</button>
@@ -415,7 +424,7 @@ function editGame(id, presetDate) {
             <button type="button" class="btn ghost" id="add-player">Добавить</button>
           </div>
         </div>
-        <div class="hint" id="share-hint">${n && total ? `С каждого: ${money(Math.ceil(total / n))}` : ""}</div>
+        <div class="hint" id="share-hint">${shareHint()}</div>
         <label><span>Место <span class="muted">(необяз.)</span></span><input type="text" name="place" value="${esc(g.place || "")}" placeholder="Корт / клуб"></label>
         <label><span>Заметка <span class="muted">(необяз.)</span></span><textarea name="note" rows="2">${esc(g.note || "")}</textarea></label>
         <div class="error" id="form-error"></div>
@@ -447,7 +456,6 @@ function editGame(id, presetDate) {
       mount(m);
       $("#game-form", m).scrollTop = scroll;
     };
-    const minutes = (t) => { const [h, mm] = t.split(":").map(Number); return h * 60 + mm; };
     form.addEventListener("change", (e) => {
       if (e.target.name === "time") {
         // сдвигаем конец, сохраняя длительность
@@ -456,7 +464,7 @@ function editGame(id, presetDate) {
       } else if (e.target.name === "end") {
         readForm(form);
         if (g.time && g.end) {
-          let d = minutes(g.end) - minutes(g.time);
+          let d = toMinutes(g.end) - toMinutes(g.time);
           if (d <= 0) d += 24 * 60;
           g.duration = Math.round((d / 60) * 100) / 100;
           redraw();
@@ -472,8 +480,7 @@ function editGame(id, presetDate) {
     form.addEventListener("input", (e) => {
       if (e.target.name === "cost") {
         readForm(form);
-        const total = toCents(g.cost), n = selected.size;
-        $("#share-hint", m).innerHTML = n && total ? `С каждого: ${money(Math.ceil(total / n))}` : "";
+        $("#share-hint", m).innerHTML = shareHint();
       }
     });
     $$("[data-toggle]", m).forEach((b) => b.onclick = () => {
@@ -530,13 +537,13 @@ function lastField(name) {
 // ---------- долги ----------
 
 function renderDebts(view) {
-  const L = computeLedger(store.state);
+  const L = computeLedger(store.data);
   const list = ui.debtMode === "direct" ? L.direct : L.simplified;
   const keys = new Set([...Object.keys(L.balance), ...Object.keys(L.paid), ...Object.keys(L.spent)]);
   const rows = [...keys]
     .map((k) => ({ k, name: keyName(k), paid: L.paid[k] || 0, spent: L.spent[k] || 0, bal: L.balance[k] || 0 }))
     .sort((a, b) => b.bal - a.bal || a.name.localeCompare(b.name, "ru"));
-  const payments = Object.entries(store.state.payments || {})
+  const payments = Object.entries(store.data.payments || {})
     .map(([id, p]) => ({ id, ...p }))
     .sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0));
 
@@ -599,7 +606,7 @@ function renderDebts(view) {
               : `<span class="tag ok">перевод</span> <b>${esc(playerName(p.fromId))}</b> → <b>${esc(playerName(p.toId))}</b>: ${money(toCents(p.amount))}`}
             <div class="muted small">${esc(fmtDate(p.date, true))}${p.note ? ` · ${esc(p.note)}` : ""}</div>
           </div>
-          <button type="button" class="btn ghost small danger-text" data-del-pay="${p.id}" aria-label="Удалить запись">✕</button>
+          <button type="button" class="btn ghost small danger-text" data-del-pay="${esc(p.id)}" aria-label="Удалить запись">✕</button>
         </li>`).join("")}</ul>` : `<div class="muted small">Пока пусто. Нажмите «✓», когда кто-то вернёт долг.</div>`}
     </section>
   `;
@@ -620,7 +627,7 @@ function renderDebts(view) {
   });
   $$("[data-new-entry]", view).forEach((b) => b.onclick = () => editPayment(b.dataset.newEntry));
   $$("[data-del-pay]", view).forEach((b) => b.onclick = async () => {
-    const p = store.state.payments[b.dataset.delPay];
+    const p = store.data.payments[b.dataset.delPay];
     if (!p) return;
     const ok = await doubleConfirm(p.kind === "debt" ? "Удалить долг?" : "Удалить перевод?",
       `${esc(playerName(p.fromId))} → ${esc(playerName(p.toId))}: ${money(toCents(p.amount))}. Балансы пересчитаются.`);
@@ -631,7 +638,7 @@ function renderDebts(view) {
 function editPayment(kind) {
   const debt = kind === "debt";
   const opts = sortedPlayers((p) => !p.archived)
-    .map((p) => `<option value="${p.id}">${esc(p.name)}${p.walletId ? ` (${esc(walletName(p.walletId))})` : ""}</option>`).join("");
+    .map((p) => `<option value="${esc(p.id)}">${esc(p.name)}${p.walletId ? ` (${esc(walletName(p.walletId))})` : ""}</option>`).join("");
   openModal(`
     <form class="sheet" id="pay-form" novalidate>
       <h2>${debt ? "Долг вручную" : "Перевод"}</h2>
@@ -673,10 +680,10 @@ function editPayment(kind) {
 // ---------- игроки ----------
 
 function renderPlayers(view) {
-  const L = computeLedger(store.state);
+  const L = computeLedger(store.data);
   const used = new Set();
-  for (const g of Object.values(store.state.games || {})) { gamePlayerIds(g).forEach((id) => used.add(id)); used.add(g.payerId); }
-  for (const p of Object.values(store.state.payments || {})) { used.add(p.fromId); used.add(p.toId); }
+  for (const g of Object.values(store.data.games || {})) { gamePlayerIds(g).forEach((id) => used.add(id)); used.add(g.payerId); }
+  for (const p of Object.values(store.data.payments || {})) { used.add(p.fromId); used.add(p.toId); }
 
   const active = sortedPlayers((p) => !p.archived);
   const archived = sortedPlayers((p) => p.archived);
@@ -690,11 +697,11 @@ function renderPlayers(view) {
           <span class="muted small">${n} ${plural(n, "игра", "игры", "игр")}${p.walletId && wallets()[p.walletId] ? ` · 👛 ${esc(walletName(p.walletId))}` : ""}</span>
         </div>
         <div class="pact">
-          <button type="button" class="btn ghost small" data-rename="${p.id}" aria-label="Изменить">✎</button>
+          <button type="button" class="btn ghost small" data-rename="${esc(p.id)}" aria-label="Изменить">✎</button>
           ${p.archived
-            ? `<button type="button" class="btn ghost small" data-unarchive="${p.id}">Вернуть</button>`
-            : `<button type="button" class="btn ghost small" data-archive="${p.id}">В архив</button>`}
-          ${!used.has(p.id) ? `<button type="button" class="btn ghost small danger-text" data-del-player="${p.id}" aria-label="Удалить">✕</button>` : ""}
+            ? `<button type="button" class="btn ghost small" data-unarchive="${esc(p.id)}">Вернуть</button>`
+            : `<button type="button" class="btn ghost small" data-archive="${esc(p.id)}">В архив</button>`}
+          ${!used.has(p.id) ? `<button type="button" class="btn ghost small danger-text" data-del-player="${esc(p.id)}" aria-label="Удалить">✕</button>` : ""}
         </div>
       </li>`;
   };
@@ -720,7 +727,7 @@ function renderPlayers(view) {
             <b>👛 ${esc(walletName(wid))}</b>
             <span class="muted small">${walletMembers(wid).map((p) => esc(p.name)).join(", ")}${bal ? ` · <span class="${bal > 0 ? "pos" : "neg"}">${bal > 0 ? "+" : ""}${money(bal)}</span>` : ""}</span>
           </div>
-          <div class="pact"><button type="button" class="btn ghost small" data-edit-wallet="${wid}">Изменить</button></div>
+          <div class="pact"><button type="button" class="btn ghost small" data-edit-wallet="${esc(wid)}">Изменить</button></div>
         </li>`;
       }).join("")}</ul>` : ""}
       <button type="button" class="btn ghost block" id="new-wallet">＋ Объединить кошельки</button>
@@ -781,7 +788,7 @@ function editWallet(wid) {
         <div class="label-row"><span>Кто в кошельке <b>${selected.size}</b></span></div>
         <div class="chips">${pool.map((p) => {
           const other = p.walletId && p.walletId !== wid && wallets()[p.walletId];
-          return `<button type="button" class="chip toggle ${selected.has(p.id) ? "on" : ""}" data-toggle="${p.id}" aria-pressed="${selected.has(p.id)}">${esc(p.name)}${other && !selected.has(p.id) ? " 👛" : ""}</button>`;
+          return `<button type="button" class="chip toggle ${selected.has(p.id) ? "on" : ""}" data-toggle="${esc(p.id)}" aria-pressed="${selected.has(p.id)}">${esc(p.name)}${other && !selected.has(p.id) ? " 👛" : ""}</button>`;
         }).join("")}</div>
         <p class="muted small">👛 — уже в другом кошельке (будет перенесён сюда).</p>
       </div>
@@ -849,7 +856,8 @@ function renamePlayer(id) {
       if (!name) return;
       let handle = e.target.elements.handle.value.trim();
       if (handle && !handle.startsWith("@")) handle = "@" + handle;
-      store.write(`players/${id}`, { ...players()[id], name, handle });
+      store.write(`players/${id}/name`, name);
+      store.write(`players/${id}/handle`, handle);
       closeModal(true);
     });
   });
@@ -897,7 +905,7 @@ function renderStats(view) {
           ${keys.map((k) => {
             const b = S.byMonth[k] || { games: 0, hours: 0, cost: 0 };
             const tip = `${monthLabel(k)}: ${b.games} ${plural(b.games, "игра", "игры", "игр")}, ${hoursFmt(b.hours)}, ${fromCents(b.cost).toLocaleString("ru-RU")} ${currency()}`;
-            return `<button type="button" class="bar" data-period="${b.games ? k : ""}" title="${esc(tip)}" aria-label="${esc(tip)}">
+            return `<button type="button" class="bar" data-period="${b.games ? esc(k) : ""}" title="${esc(tip)}" aria-label="${esc(tip)}">
               <span class="bar-val">${b.games || ""}</span>
               <span class="bar-fill" style="height:${(b.games / maxG) * 100}%"></span>
               <span class="bar-label">${shortMonth(k)}</span>
@@ -913,16 +921,16 @@ function renderStats(view) {
       <label>Период
         <select id="period">
           <option value="all" ${period === "all" ? "selected" : ""}>Всё время</option>
-          ${years.length ? `<optgroup label="Год">${years.map((y) => `<option value="${y}" ${period === y ? "selected" : ""}>${y}</option>`).join("")}</optgroup>` : ""}
-          ${months.length ? `<optgroup label="Месяц">${months.map((m) => `<option value="${m}" ${period === m ? "selected" : ""}>${monthLabel(m)}</option>`).join("")}</optgroup>` : ""}
+          ${years.length ? `<optgroup label="Год">${years.map((y) => `<option value="${esc(y)}" ${period === y ? "selected" : ""}>${y}</option>`).join("")}</optgroup>` : ""}
+          ${months.length ? `<optgroup label="Месяц">${months.map((m) => `<option value="${esc(m)}" ${period === m ? "selected" : ""}>${monthLabel(m)}</option>`).join("")}</optgroup>` : ""}
         </select>
       </label>
       <div class="tiles">
         <div class="tile"><span>Игр</span><b>${S.total.games}</b></div>
-        <div class="tile"><span>Часов</span><b>${numFmt.format(Math.round(S.total.hours * 10) / 10)}</b></div>
+        <div class="tile"><span>Часов</span><b>${num1(S.total.hours)}</b></div>
         <div class="tile wide"><span>Потрачено всего</span><b>${money(S.total.cost)}</b></div>
         <div class="tile"><span>Средняя игра</span><b>${S.total.games ? money(Math.round(S.total.cost / S.total.games)) : "—"}</b></div>
-        <div class="tile"><span>Игроков в среднем</span><b>${S.total.games ? numFmt.format(Math.round((S.total.seats / S.total.games) * 10) / 10) : "—"}</b></div>
+        <div class="tile"><span>Игроков в среднем</span><b>${S.total.games ? num1(S.total.seats / S.total.games) : "—"}</b></div>
       </div>
       <p class="muted small">Учитываются только сыгранные игры — те, что уже закончились (по времени Нячанга). Долги, внесённые вручную, в статистику не входят.${noHours ? " У игр не указана длительность — часы не посчитаны." : ""}</p>
     </section>
@@ -939,7 +947,7 @@ function renderStats(view) {
             <tr>
               <td>${esc(r.name)}${r.booked ? `<div class="muted small">бронировал ${r.booked}×</div>` : ""}</td>
               <td class="num">${r.games}</td>
-              <td class="hbar"><span class="hbar-fill" style="width:${(r.hours / maxHours) * 100}%"></span><span class="hbar-val">${numFmt.format(Math.round(r.hours * 10) / 10)}</span></td>
+              <td class="hbar"><span class="hbar-fill" style="width:${(r.hours / maxHours) * 100}%"></span><span class="hbar-val">${num1(r.hours)}</span></td>
               <td class="num">${money(r.spent)}</td>
             </tr>`).join("")}
         </tbody>
@@ -1023,7 +1031,7 @@ function renderSettings(view) {
   });
   $("#install") && ($("#install").onclick = async () => { installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; render(); });
   $("#export").onclick = () => {
-    const blob = new Blob([JSON.stringify(store.state, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify(store.data, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `pickleball-${todayIso()}.json`;
@@ -1050,6 +1058,8 @@ store.subscribe(() => {
   render();
 });
 modal.addEventListener("close", () => render());
+setInterval(() => { if (document.visibilityState === "visible" && !modal.open) render(); }, 60000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && !modal.open) render(); });
 render();
 
 if ("serviceWorker" in navigator && location.protocol !== "file:") {

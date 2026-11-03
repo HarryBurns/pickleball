@@ -1,6 +1,29 @@
 {
   "rules": {
     ".read": true,
-    ".write": true
+    "players": {
+      "$id": {
+        ".write": true,
+        ".validate": "newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 100"
+      }
+    },
+    "wallets": {
+      "$id": { ".write": true }
+    },
+    "games": {
+      "$id": {
+        ".write": true,
+        ".validate": "newData.hasChildren(['date', 'cost', 'payerId', 'players']) && newData.child('date').isString() && newData.child('date').val().matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) && newData.child('cost').isNumber() && newData.child('cost').val() >= 0"
+      }
+    },
+    "payments": {
+      "$id": {
+        ".write": true,
+        ".validate": "newData.hasChildren(['fromId', 'toId', 'amount']) && newData.child('amount').isNumber() && newData.child('amount').val() > 0"
+      }
+    },
+    "settings": {
+      "$key": { ".write": true }
+    }
   }
 }

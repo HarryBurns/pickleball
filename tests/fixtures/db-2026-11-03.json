@@ -1,0 +1,222 @@
+{
+ "games": {
+  "seed_g_1020": {
+   "cost": 110000,
+   "createdAt": 1793682205442,
+   "date": "2026-10-20",
+   "duration": 1,
+   "note": "",
+   "payerId": "seed_harry",
+   "place": "",
+   "players": {
+    "seed_anastasia": true,
+    "seed_harry": true,
+    "seed_olga": true,
+    "seed_vladimir": true
+   },
+   "time": "20:30",
+   "updatedAt": 1793682205442
+  },
+  "seed_g_1023": {
+   "cost": 60000,
+   "createdAt": 1793682205442,
+   "date": "2026-10-23",
+   "duration": 1,
+   "note": "",
+   "payerId": "seed_harry",
+   "place": "",
+   "players": {
+    "seed_harry": true,
+    "seed_vladimir": true
+   },
+   "time": "08:00",
+   "updatedAt": 1793682205442
+  },
+  "seed_g_1027a": {
+   "cost": 60000,
+   "createdAt": 1793682205442,
+   "date": "2026-10-27",
+   "duration": 1,
+   "note": "",
+   "payerId": "seed_harry",
+   "place": "",
+   "players": {
+    "seed_alexey": true,
+    "seed_harry": true,
+    "seed_igor": true,
+    "seed_olga": true,
+    "seed_vera": true
+   },
+   "time": "08:00",
+   "updatedAt": 1793682205442
+  },
+  "seed_g_1027b": {
+   "cost": 55000,
+   "createdAt": 1793682205442,
+   "date": "2026-10-27",
+   "duration": 0.5,
+   "note": "Продление на 30 минут",
+   "payerId": "seed_alexey",
+   "place": "",
+   "players": {
+    "seed_alexey": true,
+    "seed_harry": true,
+    "seed_igor": true,
+    "seed_olga": true,
+    "seed_vera": true
+   },
+   "time": "09:00",
+   "updatedAt": 1793682205442
+  },
+  "seed_g_1029": {
+   "cost": 90000,
+   "createdAt": 1793682205442,
+   "date": "2026-10-29",
+   "duration": 1.5,
+   "note": "",
+   "payerId": "seed_harry",
+   "place": "",
+   "players": {
+    "seed_alexey": true,
+    "seed_igor": true,
+    "seed_olga": true,
+    "seed_vera": true
+   },
+   "time": "07:30",
+   "updatedAt": 1793682205442
+  },
+  "seed_g_1103": {
+   "cost": 90000,
+   "createdAt": 1793682205442,
+   "date": "2026-11-03",
+   "duration": 1.5,
+   "note": "",
+   "payerId": "seed_olga",
+   "place": "",
+   "players": {
+    "seed_alexey": true,
+    "seed_harry": true,
+    "seed_igor": true,
+    "seed_vera": true
+   },
+   "time": "07:30",
+   "updatedAt": 1793682205442
+  }
+ },
+ "payments": {
+  "seed_debt_lo_h": {
+   "amount": 69000,
+   "createdAt": 1793682608093,
+   "date": "2026-11-03",
+   "fromId": "seed_olga",
+   "kind": "debt",
+   "note": "Леша + Оля получили для Алексея Т. от Веры + Игоря",
+   "toId": "seed_harry"
+  },
+  "seed_pay_lo_h": {
+   "amount": 55000,
+   "createdAt": 1793682205442,
+   "date": "2026-11-03",
+   "fromId": "seed_olga",
+   "kind": "payment",
+   "note": "Расчёты до начала учёта",
+   "toId": "seed_harry"
+  },
+  "seed_pay_n": {
+   "amount": 27500,
+   "createdAt": 1793682205442,
+   "date": "2026-10-20",
+   "fromId": "seed_anastasia",
+   "kind": "payment",
+   "note": "Анастасия вернула долг",
+   "toId": "seed_harry"
+  },
+  "seed_pay_vi_h": {
+   "amount": 69000,
+   "createdAt": 1793682608093,
+   "date": "2026-11-03",
+   "fromId": "seed_vera",
+   "kind": "payment",
+   "note": "Вера + Игорь вернули долг Алексею Т. через Лешу + Олю (из 91 000)",
+   "toId": "seed_harry"
+  },
+  "seed_pay_vi_lo": {
+   "amount": 22000,
+   "createdAt": 1793682608093,
+   "date": "2026-11-03",
+   "fromId": "seed_vera",
+   "kind": "payment",
+   "note": "Вера + Игорь вернули долг Леше + Оле (из 91 000)",
+   "toId": "seed_olga"
+  },
+  "seed_pay_vl": {
+   "amount": 57500,
+   "createdAt": 1793682205442,
+   "date": "2026-10-23",
+   "fromId": "seed_vladimir",
+   "kind": "payment",
+   "note": "Владимир вернул долг",
+   "toId": "seed_harry"
+  }
+ },
+ "players": {
+  "seed_alexey": {
+   "archived": false,
+   "createdAt": 1793680332649,
+   "handle": "@Ktykhy",
+   "name": "Алексей",
+   "walletId": "w_olga_alexey"
+  },
+  "seed_anastasia": {
+   "archived": true,
+   "createdAt": 1793682205442,
+   "name": "Анастасия"
+  },
+  "seed_harry": {
+   "archived": false,
+   "createdAt": 1793680332649,
+   "handle": "@HarryBurns",
+   "name": "Алексей Толкачев"
+  },
+  "seed_igor": {
+   "archived": false,
+   "createdAt": 1793680332649,
+   "handle": "",
+   "name": "Игорь",
+   "walletId": "w_vera_igor"
+  },
+  "seed_olga": {
+   "archived": false,
+   "createdAt": 1793680332649,
+   "handle": "@ogorodkova",
+   "name": "Ольга",
+   "walletId": "w_olga_alexey"
+  },
+  "seed_vera": {
+   "archived": false,
+   "createdAt": 1793680332649,
+   "handle": "",
+   "name": "Вера",
+   "walletId": "w_vera_igor"
+  },
+  "seed_vladimir": {
+   "archived": true,
+   "createdAt": 1793682205442,
+   "name": "Владимир"
+  }
+ },
+ "settings": {
+  "currency": "₫",
+  "seedVersion": 3
+ },
+ "wallets": {
+  "w_olga_alexey": {
+   "createdAt": 1793680332649,
+   "name": "Леша + Оля"
+  },
+  "w_vera_igor": {
+   "createdAt": 1793680332649,
+   "name": "Вера + Игорь"
+  }
+ }
+}

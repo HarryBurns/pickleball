@@ -1,0 +1,9 @@
+{
+  "name": "pickleball",
+  "private": true,
+  "type": "module",
+  "description": "Пиклбол — игры и долги. Статическое приложение без сборки; package.json нужен только для тестов.",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  }
+}

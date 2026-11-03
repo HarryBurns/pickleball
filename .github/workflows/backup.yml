@@ -1,0 +1,40 @@
+name: Backup database
+
+# Раз в сутки сохраняет всю базу в ветку "backup" (файл db.json).
+# История ветки = история данных: любую версию можно скачать
+# и загрузить через «Ещё → Восстановить из JSON».
+on:
+  schedule:
+    - cron: "17 20 * * *" # 03:17 по Нячангу
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download database
+        run: |
+          url=$(grep -oE 'https://[^"]+' config.js | head -1)
+          test -n "$url"
+          curl -sSf --retry 3 "$url/.json?print=pretty" -o "$RUNNER_TEMP/db.json"
+          python3 -c "import json,sys; d = json.load(open(sys.argv[1])); assert isinstance(d, dict) and d.get('players'), 'empty database'" "$RUNNER_TEMP/db.json"
+
+      - name: Commit to backup branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch --depth=1 origin backup; then
+            git switch -C backup FETCH_HEAD
+          else
+            git switch --orphan backup
+          fi
+          cp "$RUNNER_TEMP/db.json" db.json
+          git add db.json
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git commit -m "Backup $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push origin backup
