@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Пиклбол — игры и долги</title>
+  <meta name="description" content="Планирование игр в пиклбол и расчёт, кто кому сколько должен.">
+  <meta name="theme-color" content="#0f766e">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Пиклбол">
+  <link rel="stylesheet" href="styles.css">
+  <script src="config.js"></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>🏓 Пиклбол</h1>
+    <button id="sync" class="sync" type="button" title="Статус синхронизации"></button>
+  </header>
+
+  <div id="banner"></div>
+
+  <main id="view" aria-live="polite"></main>
+
+  <nav class="tabs" aria-label="Разделы">
+    <button data-tab="games" type="button"><span aria-hidden="true">📅</span>Игры</button>
+    <button data-tab="debts" type="button"><span aria-hidden="true">💸</span>Долги</button>
+    <button data-tab="players" type="button"><span aria-hidden="true">👥</span>Игроки</button>
+    <button data-tab="settings" type="button"><span aria-hidden="true">⚙️</span>Ещё</button>
+  </nav>
+
+  <dialog id="modal"></dialog>
+  <div id="toast" role="status"></div>
+</body>
+</html>
