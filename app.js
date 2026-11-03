@@ -26,7 +26,27 @@ function esc(s) {
 
 const pad = (n) => String(n).padStart(2, "0");
 function isoDate(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
-function todayIso() { return isoDate(new Date()); }
+// Все «сегодня/сейчас» считаем по времени Нячанга, независимо от часового пояса телефона.
+const TZ = "Asia/Ho_Chi_Minh";
+const tzFmt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+function nowParts() {
+  const o = Object.fromEntries(tzFmt.formatToParts(new Date()).map((x) => [x.type, x.value]));
+  return { date: `${o.year}-${o.month}-${o.day}`, time: `${o.hour}:${o.minute}` };
+}
+function todayIso() { return nowParts().date; }
+// Игра прошла, когда закончилась. Если время не указано — после окончания дня.
+function gameEndKey(g) {
+  if (!g.time) return `${g.date} 24:00`;
+  const dur = Number(g.duration) || 1;
+  const [h, m] = g.time.split(":").map(Number);
+  const end = h * 60 + m + Math.round(dur * 60);
+  if (end >= 24 * 60) return `${g.date} 24:00`;
+  return `${g.date} ${pad(Math.floor(end / 60))}:${pad(end % 60)}`;
+}
+function isPast(g) {
+  const n = nowParts();
+  return gameEndKey(g) <= `${n.date} ${n.time}`;
+}
 function parseIso(s) { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); }
 
 const WEEKDAYS = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
@@ -230,6 +250,7 @@ function renderCalendar(games) {
   const days = new Date(y, m, 0).getDate();
   const byDate = {};
   for (const g of games) (byDate[g.date] = byDate[g.date] || []).push(g);
+  const dayPast = (iso) => (byDate[iso] || []).every(isPast);
 
   let cells = "";
   for (let i = 0; i < startOffset; i++) cells += `<span></span>`;
@@ -238,7 +259,7 @@ function renderCalendar(games) {
     const n = (byDate[iso] || []).length;
     const cls = [
       "day",
-      n ? (iso < today ? "past" : "future") : "",
+      n ? (dayPast(iso) ? "past" : "future") : "",
       iso === today ? "today" : "",
       ui.dayFilter === iso ? "selected" : "",
     ].join(" ");
@@ -272,7 +293,7 @@ function gameCard(g) {
     .join("");
   const payerPlays = ids.includes(g.payerId);
   return `
-    <article class="card game ${g.date < todayIso() ? "is-past" : ""}">
+    <article class="card game ${isPast(g) ? "is-past" : ""}">
       <div class="game-head">
         <div>
           <div class="game-date">${esc(fmtDate(g.date))}${g.time ? ` · ${esc(g.time)}${g.duration ? `–${endTime(g.time, g.duration)}` : ""}` : ""}</div>
@@ -299,8 +320,8 @@ function renderGames(view) {
   const today = todayIso();
   let list = all;
   if (ui.dayFilter) list = all.filter((g) => g.date === ui.dayFilter);
-  const upcoming = list.filter((g) => g.date >= today).reverse();
-  const past = list.filter((g) => g.date < today);
+  const upcoming = list.filter((g) => !isPast(g)).reverse();
+  const past = list.filter(isPast);
   const PAST_LIMIT = 10;
   const pastShown = ui.showAllPast || ui.dayFilter ? past : past.slice(0, PAST_LIMIT);
 
@@ -838,7 +859,7 @@ function renamePlayer(id) {
 
 function renderStats(view) {
   const today = todayIso();
-  const played = gamesList().filter((g) => g.date && g.date <= today);
+  const played = gamesList().filter((g) => g.date && isPast(g));
   const years = [...new Set(played.map((g) => g.date.slice(0, 4)))].sort().reverse();
   const months = [...new Set(played.map((g) => g.date.slice(0, 7)))].sort().reverse();
   const valid = ["all", ...years, ...months];
@@ -903,7 +924,7 @@ function renderStats(view) {
         <div class="tile"><span>Средняя игра</span><b>${S.total.games ? money(Math.round(S.total.cost / S.total.games)) : "—"}</b></div>
         <div class="tile"><span>Игроков в среднем</span><b>${S.total.games ? numFmt.format(Math.round((S.total.seats / S.total.games) * 10) / 10) : "—"}</b></div>
       </div>
-      <p class="muted small">Учитываются только сыгранные игры (до сегодня включительно). Долги, внесённые вручную, в статистику не входят.${noHours ? " У игр не указана длительность — часы не посчитаны." : ""}</p>
+      <p class="muted small">Учитываются только сыгранные игры — те, что уже закончились (по времени Нячанга). Долги, внесённые вручную, в статистику не входят.${noHours ? " У игр не указана длительность — часы не посчитаны." : ""}</p>
     </section>
 
     ${chart}
