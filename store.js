@@ -2,16 +2,17 @@
 //  - remote: Firebase Realtime Database через REST API + SSE-стрим (без SDK).
 //  - local:  только localStorage (если адрес базы не задан).
 // Структура данных:
-//   players/{id}:  { name, archived, createdAt }
-//   games/{id}:    { date, time, place, cost, payerId, players: {id: true}, note, createdAt, updatedAt }
-//   payments/{id}: { fromId, toId, amount, date, note, createdAt }
+//   players/{id}:  { name, handle, walletId, archived, createdAt }
+//   wallets/{id}:  { name }  — общий кошелёк нескольких игроков
+//   games/{id}:    { date, time, duration, place, cost, payerId, players: {id: true}, note, createdAt, updatedAt }
+//   payments/{id}: { kind: "payment" | "debt", fromId, toId, amount, date, note, createdAt }
 //   settings:      { currency }
 
 const LS_CACHE = "pb:cache";
 const LS_QUEUE = "pb:queue";
 const LS_DB_OVERRIDE = "pb:dbUrl";
 
-const EMPTY = () => ({ players: {}, games: {}, payments: {}, settings: {} });
+const EMPTY = () => ({ players: {}, wallets: {}, games: {}, payments: {}, settings: {} });
 
 function normalizeUrl(url) {
   return (url || "").trim().replace(/\/+$/, "");

@@ -1,10 +1,18 @@
-// Расчёт долгов. Все суммы считаются в копейках (целых числах), чтобы не было ошибок округления.
+// Расчёт долгов и статистики. Все суммы считаются в копейках/минимальных единицах (целых числах).
+// Долги считаются по «кошелькам»: игроки с общим кошельком — один участник расчётов.
 
 export const toCents = (v) => Math.round((Number(v) || 0) * 100);
 export const fromCents = (c) => c / 100;
 
 export function gamePlayerIds(game) {
   return Object.keys((game && game.players) || {}).filter((id) => game.players[id]);
+}
+
+// Ключ участника расчётов: "w:<walletId>" или "p:<playerId>".
+export function walletKey(state, playerId) {
+  const p = (state.players || {})[playerId];
+  if (p && p.walletId && (state.wallets || {})[p.walletId]) return `w:${p.walletId}`;
+  return `p:${playerId}`;
 }
 
 // Делит сумму поровну; лишние копейки достаются первым игрокам (в стабильном порядке).
@@ -23,11 +31,12 @@ export function splitCost(totalCents, ids) {
 }
 
 export function computeLedger(state) {
-  const balance = {}; // >0 — ему должны, <0 — он должен
-  const paid = {};
-  const spent = {};
-  const games = {};
-  const owes = {}; // owes[a][b] — сколько a должен b (без взаимозачёта)
+  const balance = {}; // по ключам кошельков: >0 — им должны, <0 — они должны
+  const paid = {}; // по ключам кошельков
+  const spent = {}; // по ключам кошельков
+  const games = {}; // по игрокам
+  const owes = {}; // owes[a][b] — сколько кошелёк a должен кошельку b (без взаимозачёта)
+  const K = (pid) => walletKey(state, pid);
 
   const add = (obj, id, v) => { obj[id] = (obj[id] || 0) + v; };
   const addOwe = (a, b, v) => {
@@ -41,23 +50,36 @@ export function computeLedger(state) {
     const total = toCents(g.cost);
     if (!g.payerId || !ids.length) continue;
     const shares = splitCost(total, ids);
-    add(paid, g.payerId, total);
-    add(balance, g.payerId, total);
+    const payer = K(g.payerId);
+    add(paid, payer, total);
+    add(balance, payer, total);
     for (const id of ids) {
-      add(spent, id, shares[id]);
-      add(balance, id, -shares[id]);
+      const k = K(id);
+      add(spent, k, shares[id]);
+      add(balance, k, -shares[id]);
       add(games, id, 1);
-      addOwe(id, g.payerId, shares[id]);
+      addOwe(k, payer, shares[id]);
     }
   }
 
   for (const p of Object.values(state.payments || {})) {
     const amt = toCents(p.amount);
     if (!p.fromId || !p.toId || !amt) continue;
-    add(balance, p.fromId, amt);
-    add(balance, p.toId, -amt);
-    addOwe(p.fromId, p.toId, -amt);
+    const from = K(p.fromId), to = K(p.toId);
+    if (p.kind === "debt") {
+      // from должен to
+      add(balance, from, -amt);
+      add(balance, to, amt);
+      addOwe(from, to, amt);
+    } else {
+      // перевод: from вернул деньги to
+      add(balance, from, amt);
+      add(balance, to, -amt);
+      addOwe(from, to, -amt);
+    }
   }
+
+  for (const k of Object.keys(balance)) if (!balance[k]) delete balance[k];
 
   return { balance, paid, spent, games, direct: directDebts(owes), simplified: simplifyDebts(balance) };
 }
@@ -98,4 +120,33 @@ export function simplifyDebts(balance) {
     if (!c.v) creditors.shift();
   }
   return res;
+}
+
+// Статистика по сыгранным играм (список игр уже отфильтрован по периоду).
+export function computeStats(games) {
+  const total = { games: 0, hours: 0, cost: 0, seats: 0 };
+  const per = {}; // playerId -> { games, hours, spent, booked, paid }
+  const byMonth = {}; // "YYYY-MM" -> { games, hours, cost }
+  const P = (id) => (per[id] = per[id] || { games: 0, hours: 0, spent: 0, booked: 0, paid: 0 });
+  for (const g of games) {
+    const ids = gamePlayerIds(g);
+    const cost = toCents(g.cost);
+    const hours = Number(g.duration) || 0;
+    const shares = splitCost(cost, ids);
+    total.games++;
+    total.hours += hours;
+    total.cost += cost;
+    total.seats += ids.length;
+    const m = (g.date || "").slice(0, 7);
+    const bm = (byMonth[m] = byMonth[m] || { games: 0, hours: 0, cost: 0 });
+    bm.games++; bm.hours += hours; bm.cost += cost;
+    for (const id of ids) {
+      const s = P(id);
+      s.games++;
+      s.hours += hours;
+      s.spent += shares[id];
+    }
+    if (g.payerId) { const s = P(g.payerId); s.booked++; s.paid += cost; }
+  }
+  return { total, per, byMonth };
 }

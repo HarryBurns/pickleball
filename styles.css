@@ -224,6 +224,34 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 @media (max-width: 420px) {
-  .balances th:nth-child(2), .balances td:nth-child(2) { display: none; }
   table { font-size: .85rem; }
 }
+
+/* v2: кошельки, статистика */
+.handle { font-weight: 400; font-size: .85rem; }
+.tag { display: inline-block; font-size: .7rem; text-transform: uppercase; letter-spacing: .03em; padding: 1px 6px; border-radius: 6px; background: var(--warn-bg); color: var(--warn-text); vertical-align: 1px; }
+.tag.ok { background: var(--accent-soft); color: var(--text); }
+.row.two { margin-top: 10px; flex-wrap: nowrap; }
+.row.two .btn { flex: 1; }
+.spacer { flex: 1; }
+.tabs button { font-size: .7rem; }
+
+.tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 4px 0 8px; }
+.tile { background: var(--bg); border-radius: 10px; padding: 10px 12px; display: grid; gap: 2px; }
+.tile span { font-size: .78rem; color: var(--muted); }
+.tile b { font-size: 1.35rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.tile.wide { grid-column: 1 / -1; }
+@media (min-width: 560px) { .tiles { grid-template-columns: repeat(4, 1fr); } .tile.wide { grid-column: span 2; } }
+
+.bars { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; height: 150px; align-items: end; }
+.bar { position: relative; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; border: 0; background: transparent; padding: 0 0 18px; cursor: pointer; color: var(--text); font: inherit; }
+.bar:hover .bar-fill, .bar:focus-visible .bar-fill { background: var(--text); }
+.bar-fill { width: min(70%, 22px); background: var(--accent); border-radius: 4px 4px 0 0; min-height: 0; }
+.bar-val { font-size: .7rem; color: var(--muted); margin-bottom: 2px; font-variant-numeric: tabular-nums; }
+.bar-label { position: absolute; bottom: 0; font-size: .65rem; color: var(--muted); white-space: nowrap; }
+
+.stats td { font-variant-numeric: tabular-nums; }
+.hbar { position: relative; min-width: 80px; width: 35%; }
+.hbar-fill { position: absolute; left: 4px; top: 50%; transform: translateY(-50%); height: 18px; background: var(--accent-soft); border-radius: 0 4px 4px 0; max-width: calc(100% - 8px); }
+.hbar-val { position: relative; padding-left: 8px; font-weight: 500; }
+@media (max-width: 420px) { .hide-xs { display: none; } }

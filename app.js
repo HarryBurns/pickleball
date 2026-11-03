@@ -1,5 +1,5 @@
 import { createStore, newId, getDatabaseUrl, setDatabaseUrlOverride } from "./store.js";
-import { computeLedger, gamePlayerIds, splitCost, toCents, fromCents } from "./ledger.js";
+import { computeLedger, computeStats, gamePlayerIds, splitCost, toCents, fromCents } from "./ledger.js";
 
 const store = createStore();
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -12,6 +12,7 @@ const ui = {
   debtMode: localStorageGet("pb:debtMode") || "simplified",
   showArchived: false,
   showAllPast: false,
+  statsPeriod: "all", // "all" | "YYYY" | "YYYY-MM"
 };
 
 // ---------- утилиты ----------
@@ -47,7 +48,34 @@ function money(cents) {
 }
 
 function players() { return store.state.players || {}; }
+function wallets() { return store.state.wallets || {}; }
 function playerName(id) { const p = players()[id]; return p ? p.name : "(удалён)"; }
+function walletMembers(wid) {
+  return sortedPlayers((p) => p.walletId === wid);
+}
+function walletName(wid) {
+  const w = wallets()[wid];
+  if (w && w.name) return w.name;
+  const names = walletMembers(wid).map((p) => p.name);
+  return names.length ? names.join(" + ") : "(пустой кошелёк)";
+}
+// Название участника расчётов по ключу "w:<id>" / "p:<id>"
+function keyName(key) {
+  return key.startsWith("w:") ? walletName(key.slice(2)) : playerName(key.slice(2));
+}
+// Игрок, от имени которого записываем перевод для кошелька
+function keyRep(key) {
+  if (!key.startsWith("w:")) return key.slice(2);
+  const m = walletMembers(key.slice(2));
+  return (m.find((p) => !p.archived) || m[0] || {}).id;
+}
+function hoursFmt(h) { return `${numFmt.format(Math.round(h * 10) / 10)} ч`; }
+function endTime(time, duration) {
+  if (!time || !duration) return "";
+  const [h, m] = time.split(":").map(Number);
+  const t = h * 60 + m + Math.round(duration * 60);
+  return `${pad(Math.floor(t / 60) % 24)}:${pad(t % 60)}`;
+}
 function sortedPlayers(filter = () => true) {
   return Object.entries(players())
     .map(([id, p]) => ({ id, ...p }))
@@ -187,7 +215,7 @@ function render() {
     view.innerHTML = `<div class="empty">Загрузка данных…</div>`;
     return;
   }
-  const views = { games: renderGames, debts: renderDebts, players: renderPlayers, settings: renderSettings };
+  const views = { games: renderGames, debts: renderDebts, players: renderPlayers, stats: renderStats, settings: renderSettings };
   (views[ui.tab] || renderGames)(view);
 }
 
@@ -247,7 +275,8 @@ function gameCard(g) {
     <article class="card game ${g.date < todayIso() ? "is-past" : ""}">
       <div class="game-head">
         <div>
-          <div class="game-date">${esc(fmtDate(g.date))}${g.time ? ` · ${esc(g.time)}` : ""}</div>
+          <div class="game-date">${esc(fmtDate(g.date))}${g.time ? ` · ${esc(g.time)}${g.duration ? `–${endTime(g.time, g.duration)}` : ""}` : ""}</div>
+          ${g.duration ? `<div class="muted small">⏱ ${hoursFmt(Number(g.duration))}</div>` : ""}
           ${g.place ? `<div class="muted small">📍 ${esc(g.place)}</div>` : ""}
         </div>
         <div class="game-cost">
@@ -313,7 +342,7 @@ function editGame(id, presetDate) {
   const existing = id ? store.state.games[id] : null;
   const g = existing
     ? { ...existing, players: { ...(existing.players || {}) } }
-    : { date: presetDate || todayIso(), time: "", place: lastPlace(), cost: "", payerId: "", players: {}, note: "" };
+    : { date: presetDate || todayIso(), time: lastField("time"), duration: lastField("duration") || 2, place: lastField("place"), cost: "", payerId: "", players: {}, note: "" };
   const selected = new Set(gamePlayerIds(g));
 
   const draw = () => {
@@ -334,6 +363,9 @@ function editGame(id, presetDate) {
           <label>Дата<input type="date" name="date" value="${esc(g.date)}" required></label>
           <label><span>Время <span class="muted">(необяз.)</span></span><input type="time" name="time" value="${esc(g.time || "")}"></label>
         </div>
+        <label>Длительность, часов
+          <input type="number" name="duration" inputmode="decimal" min="0" step="0.5" value="${esc(g.duration ?? "")}" placeholder="2">
+        </label>
         <label>Стоимость брони корта (${esc(currency() || "сумма")})
           <input type="number" name="cost" inputmode="decimal" min="0" step="0.01" value="${esc(g.cost)}" placeholder="0" required>
         </label>
@@ -372,6 +404,7 @@ function editGame(id, presetDate) {
     const fd = new FormData(form);
     g.date = fd.get("date");
     g.time = fd.get("time");
+    g.duration = fd.get("duration");
     g.cost = fd.get("cost");
     g.payerId = fd.get("payerId");
     g.place = fd.get("place");
@@ -422,6 +455,7 @@ function editGame(id, presetDate) {
       const data = {
         date: g.date,
         time: g.time || "",
+        duration: Math.max(0, Number(g.duration) || 0),
         place: (g.place || "").trim(),
         cost: Math.round(cost * 100) / 100,
         payerId: g.payerId,
@@ -439,9 +473,9 @@ function editGame(id, presetDate) {
   openModal(draw(), mount);
 }
 
-function lastPlace() {
-  const g = gamesList()[0];
-  return (g && g.place) || "";
+function lastField(name) {
+  const g = gamesList().find((x) => x[name]);
+  return (g && g[name]) || "";
 }
 
 // ---------- долги ----------
@@ -449,9 +483,9 @@ function lastPlace() {
 function renderDebts(view) {
   const L = computeLedger(store.state);
   const list = ui.debtMode === "direct" ? L.direct : L.simplified;
-  const ids = new Set([...Object.keys(L.balance), ...Object.keys(L.paid)]);
-  const rows = [...ids]
-    .map((id) => ({ id, name: playerName(id), paid: L.paid[id] || 0, spent: L.spent[id] || 0, bal: L.balance[id] || 0, games: L.games[id] || 0 }))
+  const keys = new Set([...Object.keys(L.balance), ...Object.keys(L.paid), ...Object.keys(L.spent)]);
+  const rows = [...keys]
+    .map((k) => ({ k, name: keyName(k), paid: L.paid[k] || 0, spent: L.spent[k] || 0, bal: L.balance[k] || 0 }))
     .sort((a, b) => b.bal - a.bal || a.name.localeCompare(b.name, "ru"));
   const payments = Object.entries(store.state.payments || {})
     .map(([id, p]) => ({ id, ...p }))
@@ -459,63 +493,65 @@ function renderDebts(view) {
 
   view.innerHTML = `
     <section class="card">
-      <div class="label-row">
-        <h2>Кто кому должен</h2>
-      </div>
+      <h2>Кто кому должен</h2>
       <div class="seg" role="tablist">
         <button type="button" data-mode="simplified" class="${ui.debtMode === "simplified" ? "on" : ""}">Минимум переводов</button>
         <button type="button" data-mode="direct" class="${ui.debtMode === "direct" ? "on" : ""}">Напрямую</button>
       </div>
       <p class="muted small">${ui.debtMode === "simplified"
         ? "Долги взаимозачтены по всей компании — так переводов меньше всего."
-        : "Каждый должен тому, кто платил за его игры (с зачётом встречных долгов)."}</p>
+        : "Каждый должен тому, кто платил за его игры (с зачётом встречных долгов)."} Игроки с общим кошельком считаются вместе.</p>
       ${list.length ? `
         <table class="debts">
           <thead><tr><th>Кто</th><th></th><th>Кому</th><th class="num">Сколько</th><th></th></tr></thead>
           <tbody>
           ${list.map((d, i) => `
             <tr>
-              <td>${esc(playerName(d.from))}</td>
+              <td>${esc(keyName(d.from))}</td>
               <td class="arrow">→</td>
-              <td>${esc(playerName(d.to))}</td>
+              <td>${esc(keyName(d.to))}</td>
               <td class="num"><b>${money(d.amount)}</b></td>
-              <td class="num"><button type="button" class="btn ghost small" data-settle="${i}" title="Отметить, что долг оплачен">✓ Оплачено</button></td>
+              <td class="num"><button type="button" class="btn ghost small" data-settle="${i}" title="Отметить, что долг оплачен">✓<span class="hide-xs"> Оплачено</span></button></td>
             </tr>`).join("")}
           </tbody>
         </table>` : `<div class="empty small">Все в расчёте 🎉</div>`}
-      <button type="button" class="btn ghost block" id="add-payment">＋ Записать перевод вручную</button>
+      <div class="row two">
+        <button type="button" class="btn ghost" data-new-entry="payment">＋ Перевод</button>
+        <button type="button" class="btn ghost" data-new-entry="debt">＋ Долг вручную</button>
+      </div>
     </section>
 
     <section class="card">
-      <h2>Баланс игроков</h2>
+      <h2>Баланс</h2>
       ${rows.length ? `
       <table class="balances">
-        <thead><tr><th>Игрок</th><th class="num">Игр</th><th class="num">Заплатил</th><th class="num">Доля</th><th class="num">Баланс</th></tr></thead>
+        <thead><tr><th>Кто</th><th class="num">Заплатил</th><th class="num">Доля</th><th class="num">Баланс</th></tr></thead>
         <tbody>
           ${rows.map((r) => `
             <tr>
               <td>${esc(r.name)}</td>
-              <td class="num">${r.games}</td>
               <td class="num">${money(r.paid)}</td>
               <td class="num">${money(r.spent)}</td>
               <td class="num ${r.bal > 0 ? "pos" : r.bal < 0 ? "neg" : ""}"><b>${r.bal > 0 ? "+" : ""}${money(r.bal)}</b></td>
             </tr>`).join("")}
         </tbody>
       </table>
-      <p class="muted small">«Заплатил» — сумма броней, «Доля» — стоимость его игр. Плюс — ему должны, минус — должен он. Переводы учитываются в балансе.</p>`
+      <p class="muted small">«Заплатил» — сумма броней, «Доля» — стоимость своих игр. Плюс — им должны, минус — должны они. Баланс учитывает переводы и долги, внесённые вручную.</p>`
       : `<div class="empty small">Пока нет данных</div>`}
     </section>
 
     <section class="card">
-      <h2>История переводов</h2>
+      <h2>Переводы и ручные долги</h2>
       ${payments.length ? `<ul class="payments">${payments.map((p) => `
         <li>
           <div>
-            <b>${esc(playerName(p.fromId))}</b> → <b>${esc(playerName(p.toId))}</b>: ${money(toCents(p.amount))}
+            ${p.kind === "debt"
+              ? `<span class="tag">долг</span> <b>${esc(playerName(p.fromId))}</b> должен <b>${esc(playerName(p.toId))}</b>: ${money(toCents(p.amount))}`
+              : `<span class="tag ok">перевод</span> <b>${esc(playerName(p.fromId))}</b> → <b>${esc(playerName(p.toId))}</b>: ${money(toCents(p.amount))}`}
             <div class="muted small">${esc(fmtDate(p.date, true))}${p.note ? ` · ${esc(p.note)}` : ""}</div>
           </div>
-          <button type="button" class="btn ghost small danger-text" data-del-pay="${p.id}" aria-label="Удалить перевод">✕</button>
-        </li>`).join("")}</ul>` : `<div class="muted small">Переводов пока не было. Нажмите «✓ Оплачено», когда кто-то вернёт долг.</div>`}
+          <button type="button" class="btn ghost small danger-text" data-del-pay="${p.id}" aria-label="Удалить запись">✕</button>
+        </li>`).join("")}</ul>` : `<div class="muted small">Пока пусто. Нажмите «✓», когда кто-то вернёт долг.</div>`}
     </section>
   `;
 
@@ -524,29 +560,36 @@ function renderDebts(view) {
     const d = list[Number(b.dataset.settle)];
     const ok = await confirmDialog({
       title: "Долг оплачен?",
-      text: `<b>${esc(playerName(d.from))}</b> перевёл(а) <b>${esc(playerName(d.to))}</b> ${money(d.amount)}.`,
+      text: `<b>${esc(keyName(d.from))}</b> → <b>${esc(keyName(d.to))}</b>: ${money(d.amount)}.`,
       okText: "Да, оплачено",
     });
-    if (ok) {
-      store.write(`payments/${newId()}`, { fromId: d.from, toId: d.to, amount: fromCents(d.amount), date: todayIso(), note: "", createdAt: Date.now() });
+    const from = keyRep(d.from), to = keyRep(d.to);
+    if (ok && from && to) {
+      store.write(`payments/${newId()}`, { kind: "payment", fromId: from, toId: to, amount: fromCents(d.amount), date: todayIso(), note: "", createdAt: Date.now() });
       toast("Перевод записан");
     }
   });
-  $("#add-payment").onclick = () => editPayment();
+  $$("[data-new-entry]", view).forEach((b) => b.onclick = () => editPayment(b.dataset.newEntry));
   $$("[data-del-pay]", view).forEach((b) => b.onclick = async () => {
     const p = store.state.payments[b.dataset.delPay];
     if (!p) return;
-    const ok = await doubleConfirm("Удалить перевод?", `${esc(playerName(p.fromId))} → ${esc(playerName(p.toId))}: ${money(toCents(p.amount))}. Долг снова появится.`);
-    if (ok) { store.write(`payments/${b.dataset.delPay}`, null); toast("Перевод удалён"); }
+    const ok = await doubleConfirm(p.kind === "debt" ? "Удалить долг?" : "Удалить перевод?",
+      `${esc(playerName(p.fromId))} → ${esc(playerName(p.toId))}: ${money(toCents(p.amount))}. Балансы пересчитаются.`);
+    if (ok) { store.write(`payments/${b.dataset.delPay}`, null); toast("Запись удалена"); }
   });
 }
 
-function editPayment() {
-  const opts = sortedPlayers((p) => !p.archived).map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+function editPayment(kind) {
+  const debt = kind === "debt";
+  const opts = sortedPlayers((p) => !p.archived)
+    .map((p) => `<option value="${p.id}">${esc(p.name)}${p.walletId ? ` (${esc(walletName(p.walletId))})` : ""}</option>`).join("");
   openModal(`
     <form class="sheet" id="pay-form" novalidate>
-      <h2>Перевод</h2>
-      <label>Кто перевёл<select name="fromId" required><option value="">—</option>${opts}</select></label>
+      <h2>${debt ? "Долг вручную" : "Перевод"}</h2>
+      <p class="muted small">${debt
+        ? "Например, старые долги до начала учёта в приложении."
+        : "Кто-то вернул деньги — долг уменьшится."}</p>
+      <label>${debt ? "Кто должен" : "Кто перевёл"}<select name="fromId" required><option value="">—</option>${opts}</select></label>
       <label>Кому<select name="toId" required><option value="">—</option>${opts}</select></label>
       <div class="grid2">
         <label>Сумма<input type="number" name="amount" inputmode="decimal" min="0" step="0.01" required></label>
@@ -565,14 +608,15 @@ function editPayment() {
       const err = $("#form-error", m);
       const amount = Number(fd.get("amount"));
       if (!fd.get("fromId") || !fd.get("toId")) return (err.textContent = "Выберите обоих игроков");
-      if (fd.get("fromId") === fd.get("toId")) return (err.textContent = "Нельзя перевести самому себе");
+      if (fd.get("fromId") === fd.get("toId")) return (err.textContent = "Выберите разных игроков");
       if (!Number.isFinite(amount) || amount <= 0) return (err.textContent = "Укажите сумму");
       store.write(`payments/${newId()}`, {
+        kind: debt ? "debt" : "payment",
         fromId: fd.get("fromId"), toId: fd.get("toId"), amount: Math.round(amount * 100) / 100,
         date: fd.get("date") || todayIso(), note: String(fd.get("note") || "").trim(), createdAt: Date.now(),
       });
       closeModal(true);
-      toast("Перевод записан");
+      toast("Записано");
     });
   });
 }
@@ -587,16 +631,17 @@ function renderPlayers(view) {
 
   const active = sortedPlayers((p) => !p.archived);
   const archived = sortedPlayers((p) => p.archived);
+  const walletIds = Object.keys(wallets()).sort((a, b) => walletName(a).localeCompare(walletName(b), "ru"));
   const row = (p) => {
-    const bal = L.balance[p.id] || 0;
+    const n = L.games[p.id] || 0;
     return `
       <li class="player">
         <div class="pinfo">
-          <b>${esc(p.name)}</b>
-          <span class="muted small">${L.games[p.id] || 0} ${plural(L.games[p.id] || 0, "игра", "игры", "игр")}${bal ? ` · <span class="${bal > 0 ? "pos" : "neg"}">${bal > 0 ? "+" : ""}${money(bal)}</span>` : ""}</span>
+          <b>${esc(p.name)}${p.handle ? ` <span class="muted handle">${esc(p.handle)}</span>` : ""}</b>
+          <span class="muted small">${n} ${plural(n, "игра", "игры", "игр")}${p.walletId && wallets()[p.walletId] ? ` · 👛 ${esc(walletName(p.walletId))}` : ""}</span>
         </div>
         <div class="pact">
-          <button type="button" class="btn ghost small" data-rename="${p.id}" aria-label="Переименовать">✎</button>
+          <button type="button" class="btn ghost small" data-rename="${p.id}" aria-label="Изменить">✎</button>
           ${p.archived
             ? `<button type="button" class="btn ghost small" data-unarchive="${p.id}">Вернуть</button>`
             : `<button type="button" class="btn ghost small" data-archive="${p.id}">В архив</button>`}
@@ -614,6 +659,24 @@ function renderPlayers(view) {
       </form>
       ${active.length ? `<ul class="players">${active.map(row).join("")}</ul>` : `<div class="empty small">Добавьте первого игрока</div>`}
     </section>
+
+    <section class="card">
+      <h2>Общие кошельки</h2>
+      <p class="muted small">Игроки с общим кошельком играют каждый за себя, но в долгах считаются как один участник: внутри кошелька долгов нет.</p>
+      ${walletIds.length ? `<ul class="players">${walletIds.map((wid) => {
+        const bal = L.balance[`w:${wid}`] || 0;
+        return `
+        <li>
+          <div class="pinfo">
+            <b>👛 ${esc(walletName(wid))}</b>
+            <span class="muted small">${walletMembers(wid).map((p) => esc(p.name)).join(", ")}${bal ? ` · <span class="${bal > 0 ? "pos" : "neg"}">${bal > 0 ? "+" : ""}${money(bal)}</span>` : ""}</span>
+          </div>
+          <div class="pact"><button type="button" class="btn ghost small" data-edit-wallet="${wid}">Изменить</button></div>
+        </li>`;
+      }).join("")}</ul>` : ""}
+      <button type="button" class="btn ghost block" id="new-wallet">＋ Объединить кошельки</button>
+    </section>
+
     ${archived.length ? `
     <section class="card">
       <button type="button" class="link" id="toggle-arch">${ui.showArchived ? "▾" : "▸"} Архив (${archived.length})</button>
@@ -628,19 +691,92 @@ function renderPlayers(view) {
     if (addPlayer(input.value)) { input.value = ""; render(); $("#add-form input")?.focus(); }
   });
   $("#toggle-arch") && ($("#toggle-arch").onclick = () => { ui.showArchived = !ui.showArchived; render(); });
+  $("#new-wallet").onclick = () => editWallet(null);
+  $$("[data-edit-wallet]", view).forEach((b) => b.onclick = () => editWallet(b.dataset.editWallet));
   $$("[data-archive]", view).forEach((b) => b.onclick = () => {
     const id = b.dataset.archive;
     store.write(`players/${id}/archived`, true);
-    const bal = L.balance[id] || 0;
-    toast(bal ? `${playerName(id)} в архиве (долг ${money(bal)} сохранён)` : `${playerName(id)} в архиве`);
+    toast(`${playerName(id)} в архиве`);
   });
   $$("[data-unarchive]", view).forEach((b) => b.onclick = () => store.write(`players/${b.dataset.unarchive}/archived`, false));
   $$("[data-rename]", view).forEach((b) => b.onclick = () => renamePlayer(b.dataset.rename));
   $$("[data-del-player]", view).forEach((b) => b.onclick = async () => {
     const id = b.dataset.delPlayer;
     const ok = await doubleConfirm("Удалить игрока?", `«${esc(playerName(id))}» ещё не участвовал в играх, его можно удалить совсем.`);
-    if (ok) store.write(`players/${id}`, null);
+    if (ok) { store.write(`players/${id}`, null); cleanupWallets(); }
   });
+}
+
+// Кошелёк, в котором меньше двух игроков, не нужен.
+function cleanupWallets() {
+  for (const wid of Object.keys(wallets())) {
+    const members = walletMembers(wid);
+    if (members.length < 2) {
+      members.forEach((p) => store.write(`players/${p.id}/walletId`, null));
+      store.write(`wallets/${wid}`, null);
+    }
+  }
+}
+
+function editWallet(wid) {
+  const w = wid ? wallets()[wid] : null;
+  const selected = new Set(wid ? walletMembers(wid).map((p) => p.id) : []);
+  let name = (w && w.name) || "";
+
+  const draw = () => {
+    const pool = sortedPlayers((p) => !p.archived || selected.has(p.id));
+    return `
+    <form class="sheet" id="wallet-form" novalidate>
+      <h2>${w ? "Общий кошелёк" : "Объединить кошельки"}</h2>
+      <div class="field">
+        <div class="label-row"><span>Кто в кошельке <b>${selected.size}</b></span></div>
+        <div class="chips">${pool.map((p) => {
+          const other = p.walletId && p.walletId !== wid && wallets()[p.walletId];
+          return `<button type="button" class="chip toggle ${selected.has(p.id) ? "on" : ""}" data-toggle="${p.id}" aria-pressed="${selected.has(p.id)}">${esc(p.name)}${other && !selected.has(p.id) ? " 👛" : ""}</button>`;
+        }).join("")}</div>
+        <p class="muted small">👛 — уже в другом кошельке (будет перенесён сюда).</p>
+      </div>
+      <label><span>Название <span class="muted">(необяз.)</span></span><input type="text" name="name" value="${esc(name)}" placeholder="${esc(sortedPlayers((p) => selected.has(p.id)).map((p) => p.name).join(" + ") || "Например: Семья")}"></label>
+      ${w ? `<button type="button" class="link danger-text" id="split-wallet">Разъединить кошелёк</button>` : ""}
+      <div class="error" id="form-error"></div>
+      <div class="row end">
+        <button type="button" class="btn ghost" data-close="cancel">Отмена</button>
+        <button type="submit" class="btn primary">Сохранить</button>
+      </div>
+    </form>`;
+  };
+  const mount = (m) => {
+    const form = $("#wallet-form", m);
+    $$("[data-toggle]", m).forEach((b) => b.onclick = () => {
+      name = form.elements.name.value;
+      const id = b.dataset.toggle;
+      selected.has(id) ? selected.delete(id) : selected.add(id);
+      m.innerHTML = draw();
+      mount(m);
+    });
+    $("#split-wallet", m) && ($("#split-wallet", m).onclick = async () => {
+      closeModal(null);
+      const ok = await confirmDialog({ title: "Разъединить кошелёк?", text: "Игроки снова будут считаться в долгах по отдельности. Игры и переводы не удаляются.", okText: "Разъединить", danger: true });
+      if (!ok) return;
+      walletMembers(wid).forEach((p) => store.write(`players/${p.id}/walletId`, null));
+      store.write(`wallets/${wid}`, null);
+      toast("Кошелёк разъединён");
+    });
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      if (selected.size < 2) return ($("#form-error", m).textContent = "Выберите хотя бы двух игроков");
+      const id = wid || newId();
+      store.write(`wallets/${id}`, { name: form.elements.name.value.trim(), createdAt: (w && w.createdAt) || Date.now() });
+      for (const p of sortedPlayers()) {
+        if (selected.has(p.id) && p.walletId !== id) store.write(`players/${p.id}/walletId`, id);
+        if (!selected.has(p.id) && p.walletId === id) store.write(`players/${p.id}/walletId`, null);
+      }
+      cleanupWallets();
+      closeModal(true);
+      toast("Кошелёк сохранён");
+    });
+  };
+  openModal(draw(), mount);
 }
 
 function renamePlayer(id) {
@@ -648,8 +784,9 @@ function renamePlayer(id) {
   if (!p) return;
   openModal(`
     <form class="sheet" id="rename-form">
-      <h2>Переименовать</h2>
+      <h2>Игрок</h2>
       <label>Имя<input type="text" name="name" value="${esc(p.name)}" required autocomplete="off"></label>
+      <label><span>Ник <span class="muted">(необяз.)</span></span><input type="text" name="handle" value="${esc(p.handle || "")}" placeholder="@telegram" autocomplete="off"></label>
       <div class="row end">
         <button type="button" class="btn ghost" data-close="cancel">Отмена</button>
         <button type="submit" class="btn primary">Сохранить</button>
@@ -661,10 +798,110 @@ function renamePlayer(id) {
       e.preventDefault();
       const name = input.value.trim();
       if (!name) return;
-      store.write(`players/${id}/name`, name);
+      let handle = e.target.elements.handle.value.trim();
+      if (handle && !handle.startsWith("@")) handle = "@" + handle;
+      store.write(`players/${id}`, { ...players()[id], name, handle });
       closeModal(true);
     });
   });
+}
+
+// ---------- статистика ----------
+
+function renderStats(view) {
+  const today = todayIso();
+  const played = gamesList().filter((g) => g.date && g.date <= today);
+  const years = [...new Set(played.map((g) => g.date.slice(0, 4)))].sort().reverse();
+  const months = [...new Set(played.map((g) => g.date.slice(0, 7)))].sort().reverse();
+  const valid = ["all", ...years, ...months];
+  if (!valid.includes(ui.statsPeriod)) ui.statsPeriod = "all";
+  const period = ui.statsPeriod;
+  const games = period === "all" ? played : played.filter((g) => g.date.startsWith(period));
+  const S = computeStats(games);
+  const monthLabel = (ym) => { const [y, m] = ym.split("-").map(Number); return `${MONTHS[m - 1]} ${y}`; };
+  const shortMonth = (ym) => { const [y, m] = ym.split("-").map(Number); return `${MONTHS[m - 1].slice(0, 3)}${y !== new Date().getFullYear() ? ` ${String(y).slice(2)}` : ""}`; };
+
+  const rows = Object.entries(S.per)
+    .map(([id, s]) => ({ id, name: playerName(id), ...s }))
+    .filter((r) => r.games || r.booked)
+    .sort((a, b) => b.hours - a.hours || b.games - a.games || a.name.localeCompare(b.name, "ru"));
+  const maxHours = Math.max(1, ...rows.map((r) => r.hours));
+  const noHours = S.total.games && !S.total.hours;
+
+  // Помесячный график для «всё время» и для года
+  let chart = "";
+  if (period.length !== 7 && games.length) {
+    let keys;
+    if (period === "all") {
+      const first = games[games.length - 1].date.slice(0, 7);
+      keys = [];
+      const d = new Date(Number(first.slice(0, 4)), Number(first.slice(5, 7)) - 1, 1);
+      const last = today.slice(0, 7);
+      while (isoDate(d).slice(0, 7) <= last && keys.length < 120) { keys.push(isoDate(d).slice(0, 7)); d.setMonth(d.getMonth() + 1); }
+      keys = keys.slice(-12);
+    } else keys = Array.from({ length: 12 }, (_, i) => `${period}-${pad(i + 1)}`);
+    const maxG = Math.max(1, ...keys.map((k) => (S.byMonth[k] || {}).games || 0));
+    chart = `
+      <section class="card">
+        <h2>Игры по месяцам</h2>
+        <div class="bars" role="img" aria-label="Количество игр по месяцам">
+          ${keys.map((k) => {
+            const b = S.byMonth[k] || { games: 0, hours: 0, cost: 0 };
+            const tip = `${monthLabel(k)}: ${b.games} ${plural(b.games, "игра", "игры", "игр")}, ${hoursFmt(b.hours)}, ${fromCents(b.cost).toLocaleString("ru-RU")} ${currency()}`;
+            return `<button type="button" class="bar" data-period="${b.games ? k : ""}" title="${esc(tip)}" aria-label="${esc(tip)}">
+              <span class="bar-val">${b.games || ""}</span>
+              <span class="bar-fill" style="height:${(b.games / maxG) * 100}%"></span>
+              <span class="bar-label">${shortMonth(k)}</span>
+            </button>`;
+          }).join("")}
+        </div>
+        <p class="muted small">Нажмите на столбик — откроется статистика за месяц.</p>
+      </section>`;
+  }
+
+  view.innerHTML = `
+    <section class="card">
+      <label>Период
+        <select id="period">
+          <option value="all" ${period === "all" ? "selected" : ""}>Всё время</option>
+          ${years.length ? `<optgroup label="Год">${years.map((y) => `<option value="${y}" ${period === y ? "selected" : ""}>${y}</option>`).join("")}</optgroup>` : ""}
+          ${months.length ? `<optgroup label="Месяц">${months.map((m) => `<option value="${m}" ${period === m ? "selected" : ""}>${monthLabel(m)}</option>`).join("")}</optgroup>` : ""}
+        </select>
+      </label>
+      <div class="tiles">
+        <div class="tile"><span>Игр</span><b>${S.total.games}</b></div>
+        <div class="tile"><span>Часов</span><b>${numFmt.format(Math.round(S.total.hours * 10) / 10)}</b></div>
+        <div class="tile wide"><span>Потрачено всего</span><b>${money(S.total.cost)}</b></div>
+        <div class="tile"><span>Средняя игра</span><b>${S.total.games ? money(Math.round(S.total.cost / S.total.games)) : "—"}</b></div>
+        <div class="tile"><span>Игроков в среднем</span><b>${S.total.games ? numFmt.format(Math.round((S.total.seats / S.total.games) * 10) / 10) : "—"}</b></div>
+      </div>
+      <p class="muted small">Учитываются только сыгранные игры (до сегодня включительно). Долги, внесённые вручную, в статистику не входят.${noHours ? " У игр не указана длительность — часы не посчитаны." : ""}</p>
+    </section>
+
+    ${chart}
+
+    <section class="card">
+      <h2>По игрокам</h2>
+      ${rows.length ? `
+      <table class="stats">
+        <thead><tr><th>Игрок</th><th class="num">Игр</th><th>Часов</th><th class="num">Потратил</th></tr></thead>
+        <tbody>
+          ${rows.map((r) => `
+            <tr>
+              <td>${esc(r.name)}${r.booked ? `<div class="muted small">бронировал ${r.booked}×</div>` : ""}</td>
+              <td class="num">${r.games}</td>
+              <td class="hbar"><span class="hbar-fill" style="width:${(r.hours / maxHours) * 100}%"></span><span class="hbar-val">${numFmt.format(Math.round(r.hours * 10) / 10)}</span></td>
+              <td class="num">${money(r.spent)}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+      <p class="muted small">«Потратил» — доля игрока в стоимости кортов (кто бы ни платил за бронь).</p>`
+      : `<div class="empty small">За этот период игр нет</div>`}
+    </section>
+  `;
+
+  $("#period").onchange = (e) => { ui.statsPeriod = e.target.value; render(); };
+  $$("[data-period]", view).forEach((b) => b.onclick = () => { if (b.dataset.period) { ui.statsPeriod = b.dataset.period; render(); } });
 }
 
 // ---------- настройки ----------
@@ -756,14 +993,52 @@ function renderSettings(view) {
   });
 }
 
+// ---------- начальные данные (один раз) ----------
+
+// Идентификаторы фиксированы, поэтому если несколько человек откроют приложение одновременно,
+// они запишут одно и то же, без дублей.
+const SEED_VERSION = 1;
+let seeding = false;
+function seedOnce() {
+  const st = store.state;
+  if (seeding || (st.settings || {}).seedVersion >= SEED_VERSION) return;
+  seeding = true;
+  store.write("settings/seedVersion", SEED_VERSION);
+  const people = [
+    { key: "olga", name: "Ольга", handle: "@ogorodkova", wallet: "w_olga_alexey" },
+    { key: "alexey", name: "Алексей", handle: "@Ktykhy", wallet: "w_olga_alexey" },
+    { key: "harry", name: "Алексей Толкачев", handle: "@HarryBurns" },
+    { key: "vera", name: "Вера", wallet: "w_vera_igor" },
+    { key: "igor", name: "Игорь", wallet: "w_vera_igor" },
+  ];
+  const ids = {};
+  const now = Date.now();
+  for (const p of people) {
+    const existing = Object.entries(st.players || {}).find(([, x]) => x.name.trim().toLowerCase() === p.name.toLowerCase());
+    const id = existing ? existing[0] : `seed_${p.key}`;
+    ids[p.key] = id;
+    const prev = existing ? existing[1] : { archived: false, createdAt: now };
+    store.write(`players/${id}`, { ...prev, name: p.name, handle: p.handle || prev.handle || "", walletId: p.wallet || prev.walletId || null });
+  }
+  store.write("wallets/w_olga_alexey", { name: "Леша + Оля", createdAt: now });
+  store.write("wallets/w_vera_igor", { name: "Вера + Игорь", createdAt: now });
+  const date = todayIso();
+  store.write("payments/seed_debt_1", { kind: "debt", fromId: ids.vera, toId: ids.olga, amount: 45000, date, note: "Долг до начала учёта", createdAt: now });
+  store.write("payments/seed_debt_2", { kind: "debt", fromId: ids.olga, toId: ids.harry, amount: 77000, date, note: "Долг до начала учёта", createdAt: now + 1 });
+  store.write("settings/currency", "₫");
+  seeding = false;
+}
+
 // ---------- старт ----------
 
 store.subscribe(() => {
+  if (store.loaded) seedOnce();
   // не перерисовываем страницу под открытой формой, чтобы не терять ввод
   if (modal.open) { renderSync(); return; }
   render();
 });
 modal.addEventListener("close", () => render());
+if (store.loaded) seedOnce();
 render();
 
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
