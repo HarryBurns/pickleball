@@ -1021,121 +1021,14 @@ function renderSettings(view) {
   });
 }
 
-// ---------- начальные данные (один раз) ----------
-
-// Идентификаторы фиксированы, поэтому если несколько человек откроют приложение одновременно,
-// они запишут одно и то же, без дублей.
-const SEED_VERSION = 3;
-let seeding = false;
-function seedOnce() {
-  const v = (store.state.settings || {}).seedVersion || 0;
-  if (seeding || v >= SEED_VERSION) return;
-  seeding = true;
-  store.write("settings/seedVersion", SEED_VERSION);
-  if (v < 1) seedV1();
-  if (v < 2) seedV2();
-  if (v < 3) seedV3();
-  seeding = false;
-}
-
-function findPlayerId(name, fallback) {
-  const e = Object.entries(players()).find(([, x]) => x.name.trim().toLowerCase() === name.toLowerCase());
-  return e ? e[0] : fallback;
-}
-
-// v1: игроки, кошельки и долги на 03.11.2026
-function seedV1() {
-  const st = store.state;
-  const people = [
-    { key: "olga", name: "Ольга", handle: "@ogorodkova", wallet: "w_olga_alexey" },
-    { key: "alexey", name: "Алексей", handle: "@Ktykhy", wallet: "w_olga_alexey" },
-    { key: "harry", name: "Алексей Толкачев", handle: "@HarryBurns" },
-    { key: "vera", name: "Вера", wallet: "w_vera_igor" },
-    { key: "igor", name: "Игорь", wallet: "w_vera_igor" },
-  ];
-  const ids = {};
-  const now = Date.now();
-  for (const p of people) {
-    const existing = Object.entries(st.players || {}).find(([, x]) => x.name.trim().toLowerCase() === p.name.toLowerCase());
-    const id = existing ? existing[0] : `seed_${p.key}`;
-    ids[p.key] = id;
-    const prev = existing ? existing[1] : { archived: false, createdAt: now };
-    store.write(`players/${id}`, { ...prev, name: p.name, handle: p.handle || prev.handle || "", walletId: p.wallet || prev.walletId || null });
-  }
-  store.write("wallets/w_olga_alexey", { name: "Леша + Оля", createdAt: now });
-  store.write("wallets/w_vera_igor", { name: "Вера + Игорь", createdAt: now });
-  const date = todayIso();
-  store.write("payments/seed_debt_1", { kind: "debt", fromId: ids.vera, toId: ids.olga, amount: 45000, date, note: "Долг до начала учёта", createdAt: now });
-  store.write("payments/seed_debt_2", { kind: "debt", fromId: ids.olga, toId: ids.harry, amount: 77000, date, note: "Долг до начала учёта", createdAt: now + 1 });
-  store.write("settings/currency", "₫");
-}
-
-// v2: вместо двух ручных долгов — все игры с 20.10.2026 и переводы между ними
-function seedV2() {
-  const now = Date.now();
-  const H = findPlayerId("Алексей Толкачев", "seed_harry");
-  const O = findPlayerId("Ольга", "seed_olga");
-  const A = findPlayerId("Алексей", "seed_alexey");
-  const V = findPlayerId("Вера", "seed_vera");
-  const I = findPlayerId("Игорь", "seed_igor");
-  const Vl = findPlayerId("Владимир", "seed_vladimir");
-  const N = findPlayerId("Анастасия", "seed_anastasia");
-  if (!players()[Vl]) store.write(`players/${Vl}`, { name: "Владимир", archived: true, createdAt: now });
-  if (!players()[N]) store.write(`players/${N}`, { name: "Анастасия", archived: true, createdAt: now });
-
-  store.write("payments/seed_debt_1", null);
-  store.write("payments/seed_debt_2", null);
-
-  const game = (id, date, time, duration, cost, payerId, ids, note = "") =>
-    store.write(`games/${id}`, {
-      date, time, duration, place: "", cost, payerId, note,
-      players: Object.fromEntries(ids.map((x) => [x, true])),
-      createdAt: now, updatedAt: now,
-    });
-  game("seed_g_1020", "2026-10-20", "20:30", 1, 110000, H, [H, Vl, N, O]);
-  game("seed_g_1023", "2026-10-23", "08:00", 1, 60000, H, [H, Vl]);
-  game("seed_g_1027a", "2026-10-27", "08:00", 1, 60000, H, [H, O, A, V, I]);
-  game("seed_g_1027b", "2026-10-27", "09:00", 0.5, 55000, A, [H, O, A, V, I], "Продление на 30 минут");
-  game("seed_g_1029", "2026-10-29", "07:30", 1.5, 90000, H, [O, A, V, I]);
-  game("seed_g_1103", "2026-11-03", "07:30", 1.5, 90000, O, [H, A, V, I]);
-
-  const pay = (id, fromId, toId, amount, date, note) =>
-    store.write(`payments/${id}`, { kind: "payment", fromId, toId, amount, date, note, createdAt: now });
-  pay("seed_pay_vl", Vl, H, 57500, "2026-10-23", "Владимир вернул долг");
-  pay("seed_pay_n", N, H, 27500, "2026-10-20", "Анастасия вернула долг");
-  // Вера + Игорь отдали Леше + Оле 91 000: 67 000 — их долг Леше + Оле за 27.10 и 03.11,
-  // 24 000 — долг Алексею Т., который теперь висит на Леше + Оле.
-  pay("seed_pay_vi_lo", V, O, 67000, "2026-11-03", "Часть из 91 000, отданных Леше + Оле");
-  pay("seed_pay_vi_h", V, H, 24000, "2026-11-03", "Часть из 91 000 — через Лешу + Олю");
-  store.write("payments/seed_debt_lo_h", { kind: "debt", fromId: O, toId: H, amount: 24000, date: "2026-11-03", note: "Леша + Оля получили эти деньги от Веры + Игоря", createdAt: now });
-  pay("seed_pay_lo_h", O, H, 55000, "2026-11-03", "Расчёты до начала учёта");
-}
-
-// v3: 91 000 от Веры + Игоря — это их долг Алексею Т. (69 000) и Леше + Оле (22 000).
-// Деньги получили Леша + Оля, поэтому 69 000 теперь должны Алексею Т. они.
-// Итог «напрямую»: Вера + Игорь → Леша + Оля 45 000, Леша + Оля → Алексей Т. 77 000.
-function seedV3() {
-  const now = Date.now();
-  const H = findPlayerId("Алексей Толкачев", "seed_harry");
-  const O = findPlayerId("Ольга", "seed_olga");
-  const V = findPlayerId("Вера", "seed_vera");
-  const pay = (id, kind, fromId, toId, amount, note) =>
-    store.write(`payments/${id}`, { kind, fromId, toId, amount, date: "2026-11-03", note, createdAt: now });
-  pay("seed_pay_vi_h", "payment", V, H, 69000, "Вера + Игорь вернули долг Алексею Т. через Лешу + Олю (из 91 000)");
-  pay("seed_debt_lo_h", "debt", O, H, 69000, "Леша + Оля получили для Алексея Т. от Веры + Игоря");
-  pay("seed_pay_vi_lo", "payment", V, O, 22000, "Вера + Игорь вернули долг Леше + Оле (из 91 000)");
-}
-
 // ---------- старт ----------
 
 store.subscribe(() => {
-  if (store.loaded) seedOnce();
   // не перерисовываем страницу под открытой формой, чтобы не терять ввод
   if (modal.open) { renderSync(); return; }
   render();
 });
 modal.addEventListener("close", () => render());
-if (store.loaded) seedOnce();
 render();
 
 if ("serviceWorker" in navigator && location.protocol !== "file:") {

@@ -70,7 +70,7 @@ players/{id}:  { name, handle, walletId, archived, createdAt }
 wallets/{id}:  { name, createdAt }
 games/{id}:    { date, time, duration, place, cost, payerId, players: {playerId: true}, note, createdAt, updatedAt }
 payments/{id}: { kind: "payment" | "debt", fromId, toId, amount, date, note, createdAt }
-settings:      { currency, seedVersion }
+settings:      { currency }
 ```
 
 Каждая запись сохраняется отдельно, поэтому одновременные правки разных игр/игроков не затирают друг друга.
