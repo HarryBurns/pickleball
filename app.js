@@ -1025,7 +1025,7 @@ function renderSettings(view) {
 
 // Идентификаторы фиксированы, поэтому если несколько человек откроют приложение одновременно,
 // они запишут одно и то же, без дублей.
-const SEED_VERSION = 2;
+const SEED_VERSION = 3;
 let seeding = false;
 function seedOnce() {
   const v = (store.state.settings || {}).seedVersion || 0;
@@ -1034,6 +1034,7 @@ function seedOnce() {
   store.write("settings/seedVersion", SEED_VERSION);
   if (v < 1) seedV1();
   if (v < 2) seedV2();
+  if (v < 3) seedV3();
   seeding = false;
 }
 
@@ -1108,6 +1109,21 @@ function seedV2() {
   pay("seed_pay_vi_h", V, H, 24000, "2026-11-03", "Часть из 91 000 — через Лешу + Олю");
   store.write("payments/seed_debt_lo_h", { kind: "debt", fromId: O, toId: H, amount: 24000, date: "2026-11-03", note: "Леша + Оля получили эти деньги от Веры + Игоря", createdAt: now });
   pay("seed_pay_lo_h", O, H, 55000, "2026-11-03", "Расчёты до начала учёта");
+}
+
+// v3: 91 000 от Веры + Игоря — это их долг Алексею Т. (69 000) и Леше + Оле (22 000).
+// Деньги получили Леша + Оля, поэтому 69 000 теперь должны Алексею Т. они.
+// Итог «напрямую»: Вера + Игорь → Леша + Оля 45 000, Леша + Оля → Алексей Т. 77 000.
+function seedV3() {
+  const now = Date.now();
+  const H = findPlayerId("Алексей Толкачев", "seed_harry");
+  const O = findPlayerId("Ольга", "seed_olga");
+  const V = findPlayerId("Вера", "seed_vera");
+  const pay = (id, kind, fromId, toId, amount, note) =>
+    store.write(`payments/${id}`, { kind, fromId, toId, amount, date: "2026-11-03", note, createdAt: now });
+  pay("seed_pay_vi_h", "payment", V, H, 69000, "Вера + Игорь вернули долг Алексею Т. через Лешу + Олю (из 91 000)");
+  pay("seed_debt_lo_h", "debt", O, H, 69000, "Леша + Оля получили для Алексея Т. от Веры + Игоря");
+  pay("seed_pay_vi_lo", "payment", V, O, 22000, "Вера + Игорь вернули долг Леше + Оле (из 91 000)");
 }
 
 // ---------- старт ----------

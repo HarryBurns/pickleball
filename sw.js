@@ -1,5 +1,5 @@
 // Service worker: приложение открывается без сети, обновления подтягиваются в фоне.
-const CACHE = "pickleball-v5";
+const CACHE = "pickleball-v6";
 const SHELL = [
   "./", "index.html", "styles.css", "app.js", "store.js", "ledger.js", "config.js",
   "manifest.webmanifest", "icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png",
